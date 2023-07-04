@@ -5,33 +5,39 @@ defmodule Ch.Local do
     query = Ch.Query.build(statement, opts)
 
     case execute(query, params, opts) do
-      {result, 0} -> {:ok, result}
-      {result, code} -> {:error, code, result}
+      {result, 0} ->
+        rows = Ch.RowBinary.decode_rows(result)
+        {:ok, %Ch.Result{command: query.command, rows: rows, num_rows: length(rows)}}
+
+      {result, code} ->
+        {:error, code, result}
     end
   end
 
   defp execute(query, params, opts) do
     {cmd, cmd_args} = clickhouse_local_cmd()
 
+    param_statements =
+      params
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {{k, v}, _idx} -> ["set param_#{k}=", to_string(v), ?;]
+        {v, idx} -> ["set param_$#{idx}=", to_string(v), ?;]
+      end)
+
     args = [
       "--path",
       opts[:path] || ".",
       "--query",
-      query.statement
+      IO.iodata_to_binary([param_statements | query.statement])
     ]
 
-    param_args =
-      params
-      |> Enum.with_index()
-      |> Enum.flat_map(fn
-        {{k, v}, _idx} -> ["--param_#{k}", to_string(v)]
-        {v, idx} -> ["--param_$#{idx}", to_string(v)]
-      end)
-
-    args = args ++ param_args
     args = if username = opts[:username], do: ["--username", username | args], else: args
     args = if password = opts[:password], do: ["--password", password | args], else: args
     args = if database = opts[:database], do: ["--database", database | args], else: args
+
+    format = opts[:format] || "RowBinaryWithNamesAndTypes"
+    args = ["--output-format", format | args]
 
     System.cmd(cmd, cmd_args ++ args, stderr_to_stdout: true)
   end
