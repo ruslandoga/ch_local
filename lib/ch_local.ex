@@ -1,57 +1,87 @@
 defmodule Ch.Local do
   @moduledoc "Minimal wrapper around `clickhouse-local` CLI."
 
-  def query(statement, params \\ [], opts \\ []) do
-    query = Ch.Query.build(statement, opts)
+  alias Ch.Local.{Connection, Query}
+  alias Ch.Result
 
-    case execute(query, params, opts) do
-      {result, 0} ->
-        rows = Ch.RowBinary.decode_rows(result)
-        {:ok, %Ch.Result{command: query.command, rows: rows, num_rows: length(rows)}}
+  @doc """
+  Start the connection process and connect to ClickHouse.
 
-      {result, code} ->
-        {:error, code, result}
+  ## Options
+
+  See `clickhouse local --help` for supported options. These options would be added to each query.
+
+  ## Example
+
+      # clickhouse-local --path . --async_insert true <...per-query params...>
+      start_link(path: ".", async_insert: true)
+
+  """
+  def start_link(opts \\ []) do
+    ensure_no_pool!(opts)
+    DBConnection.start_link(Connection, opts)
+  end
+
+  @doc """
+  Returns a supervisor child specification for a DBConnection pool.
+  """
+  def child_spec(opts) do
+    ensure_no_pool!(opts)
+    DBConnection.child_spec(Connection, opts)
+  end
+
+  defp ensure_no_pool!(opts) do
+    if pool_size = opts[:pool_size] do
+      if is_integer(pool_size) and pool_size > 1 do
+        raise ArgumentError,
+              "Ch.Local doesn't support pooling of more than one connection, got `[pool_size: #{pool_size}]`"
+      end
     end
   end
 
-  defp execute(query, params, opts) do
-    {cmd, cmd_args} = clickhouse_local_cmd()
+  @doc """
+  Runs a query and returns the result as `{:ok, %Ch.Result{}}` or
+  `{:error, Exception.t()}` if there was a database error.
 
-    param_statements =
-      params
-      |> Enum.with_index()
-      |> Enum.flat_map(fn
-        {{k, v}, _idx} -> ["set param_#{k}=", to_string(v), ?;]
-        {v, idx} -> ["set param_$#{idx}=", to_string(v), ?;]
-      end)
+  ## Options
 
-    args = [
-      "--path",
-      opts[:path] || ".",
-      "--query",
-      IO.iodata_to_binary([param_statements | query.statement])
-    ]
+    * `:timeout` - Query request timeout
+    * `:encode` - Whether to automatically encode `params` to `RowBinary`
+    * `:decode` - Whether to automatically decode `response` from `RowBinary`
+    * `:types` - ClickHouse types to use for encoding `RowBinary`
+    * anything listed in `clickhouse local --help`
 
-    args = if username = opts[:username], do: ["--username", username | args], else: args
-    args = if password = opts[:password], do: ["--password", password | args], else: args
-    args = if database = opts[:database], do: ["--database", database | args], else: args
+  ## Examples
 
-    format = opts[:format] || "RowBinaryWithNamesAndTypes"
-    args = ["--output-format", format | args]
+      # echo 'set param_a=1; select 1 + {a:Int16}' | clickhouse-local --readonly true
+      query(conn, "select 1 + {a:Int16}", %{"a" => 1}, readonly: true)
 
-    System.cmd(cmd, cmd_args ++ args, stderr_to_stdout: true)
+      # echo 'insert into example.table(column) format RowBinary\n\x01\x02\x03' | clickhouse-local --path .
+      query(conn, "insert into example.table(column) format RowBinary", [[1], [2], [3]], path: ".", types: ["UInt8"])
+
+      # echo 'select * from example.table format CSV' | clickhouse-local --path .
+      query(conn, "select * from example.table format CSV", [], path: ".")
+
+  """
+  @spec query(DBConnection.conn(), iodata, params, Keyword.t()) ::
+          {:ok, Result.t()} | {:error, Exception.t()}
+        when params: map | [term] | [row :: [term]] | iodata | Enumerable.t()
+  def query(conn, statement, params \\ [], opts \\ []) do
+    query = Query.build(statement, opts)
+
+    with {:ok, _query, result} <- DBConnection.execute(conn, query, params, opts) do
+      {:ok, result}
+    end
   end
 
-  defp clickhouse_local_cmd do
-    candidates = [
-      {"clickhouse-local", _args = []},
-      {"clickhouse", _args = ["local"]}
-    ]
-
-    cmd_with_args = Enum.find(candidates, fn {cmd, _args} -> System.find_executable(cmd) end)
-
-    cmd_with_args ||
-      raise "could not find `clickhouse-local` nor `local` executables in path, " <>
-              "please guarantee that one of them is available before running Ch.Local commands"
+  @doc """
+  Runs a query and returns the result or raises `Ch.Error` if
+  there was an error. See `query/4`.
+  """
+  @spec query!(DBConnection.conn(), iodata, params, Keyword.t()) :: Result.t()
+        when params: map | [term] | [row :: [term]] | iodata | Enumerable.t()
+  def query!(conn, statement, params \\ [], opts \\ []) do
+    query = Query.build(statement, opts)
+    DBConnection.execute!(conn, query, params, opts)
   end
 end
