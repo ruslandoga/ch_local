@@ -12,7 +12,10 @@ defmodule Ch.Local.Connection do
   def connect(opts) do
     handshake = Query.build("select 1")
     params = DBConnection.Query.encode(handshake, _params = [], _opts = [])
-    common_flags = Enum.map(opts, fn {k, v} -> {"--#{k}", to_string(v)} end)
+
+    common_flags =
+      Keyword.drop(opts, [:timeout, :pool_index])
+      |> Enum.map(fn {k, v} -> {"--#{k}", to_string(v)} end)
 
     case handle_execute(handshake, params, _opts = [], common_flags) do
       {:ok, handshake, responses, ^common_flags} ->
@@ -75,7 +78,7 @@ defmodule Ch.Local.Connection do
   @impl true
   def handle_execute(query, params, _opts, common_flags) do
     {extra_flags, body} = params
-    flags = Keyword.merge(common_flags, extra_flags)
+    flags = common_flags ++ extra_flags
 
     case exec(flags, body) do
       {:ok, responses} -> {:ok, query, responses, common_flags}

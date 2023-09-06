@@ -70,7 +70,7 @@ defimpl DBConnection.Query, for: Ch.Local.Query do
     types = Keyword.get(opts, :types)
     default_format = if types, do: "RowBinary", else: "RowBinaryWithNamesAndTypes"
     format = Keyword.get(opts, :format) || default_format
-    {[{"--format", format}], [query_params(params) | statement]}
+    {[{"--format", format}], [query_params(params) | statement]} |> IO.inspect(label: "encode")
   end
 
   defp format_row_binary?(statement) when is_binary(statement) do
