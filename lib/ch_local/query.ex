@@ -33,19 +33,12 @@ defimpl DBConnection.Query, for: Ch.Local.Query do
   @spec describe(Query.t(), Keyword.t()) :: Query.t()
   def describe(query, _opts), do: query
 
-  @spec encode(Query.t(), params, Keyword.t()) :: {extra_flags, body}
-        when params: map | [term] | [row :: [term]] | iodata | Enumerable.t(),
-             extra_flags: [{String.t(), String.t()}],
-             body: iodata | Enumerable.t()
+  @spec encode(Query.t(), params, Keyword.t()) :: iodata
+        when params: map | [term] | [row :: [term]] | iodata
 
-  def encode(%Query{command: :insert, encode: false, statement: statement}, data, _opts) do
-    body =
-      case data do
-        _ when is_list(data) or is_binary(data) -> [statement, ?\n | data]
-        _ -> Stream.concat([[statement, ?\n]], data)
-      end
-
-    {_extra_flags = [], body}
+  def encode(%Query{command: :insert, encode: false, statement: statement}, data, _opts)
+      when is_list(data) or is_binary(data) do
+    [statement, ?\n | data]
   end
 
   def encode(%Query{command: :insert, statement: statement}, params, opts) do
@@ -54,23 +47,20 @@ defimpl DBConnection.Query, for: Ch.Local.Query do
         types = Keyword.fetch!(opts, :types)
         header = RowBinary.encode_names_and_types(names, types)
         data = RowBinary.encode_rows(params, types)
-        {_extra_flags = [], [statement, ?\n, header | data]}
+        [statement, ?\n, header | data]
 
       format_row_binary?(statement) ->
         types = Keyword.fetch!(opts, :types)
         data = RowBinary.encode_rows(params, types)
-        {_extra_flags = [], [statement, ?\n | data]}
+        [statement, ?\n | data]
 
       true ->
-        {_extra_flags = [], [query_params(params) | statement]}
+        [query_params(params) | statement]
     end
   end
 
-  def encode(%Query{statement: statement}, params, opts) do
-    types = Keyword.get(opts, :types)
-    default_format = if types, do: "RowBinary", else: "RowBinaryWithNamesAndTypes"
-    format = Keyword.get(opts, :format) || default_format
-    {[{"--format", format}], [query_params(params) | statement]} |> IO.inspect(label: "encode")
+  def encode(%Query{statement: statement}, params, _opts) do
+    [query_params(params) | statement]
   end
 
   defp format_row_binary?(statement) when is_binary(statement) do
@@ -88,19 +78,29 @@ defimpl DBConnection.Query, for: Ch.Local.Query do
     %Result{num_rows: 0, rows: nil, command: :insert, headers: []}
   end
 
-  def decode(%Query{decode: false, command: command}, data, _opts) when is_list(data) do
+  def decode(%Query{decode: false, command: command}, data, _opts) when is_binary(data) do
     %Result{rows: data, command: command, headers: []}
   end
 
-  def decode(%Query{command: command}, data, opts) when is_list(data) do
+  def decode(%Query{command: command}, data, opts) when is_binary(data) do
     case opts[:format] do
       "RowBinary" ->
         types = Keyword.fetch!(opts, :types)
-        rows = data |> IO.iodata_to_binary() |> RowBinary.decode_rows(types)
+        rows = RowBinary.decode_rows(data, types)
         %Result{num_rows: length(rows), rows: rows, command: command, headers: []}
 
       "RowBinaryWithNamesAndTypes" ->
-        rows = data |> IO.iodata_to_binary() |> RowBinary.decode_rows()
+        rows = RowBinary.decode_rows(data)
+        %Result{num_rows: length(rows), rows: rows, command: command, headers: []}
+
+      nil ->
+        rows =
+          if types = opts[:types] do
+            RowBinary.decode_rows(data, types)
+          else
+            RowBinary.decode_rows(data)
+          end
+
         %Result{num_rows: length(rows), rows: rows, command: command, headers: []}
 
       _other ->

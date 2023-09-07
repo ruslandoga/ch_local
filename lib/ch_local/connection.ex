@@ -8,26 +8,29 @@ defmodule Ch.Local.Connection do
   alias Ch.{Error, Result}
 
   @impl true
-  @spec connect(Keyword.t()) :: {:ok, keyword} | {:error, Error.t()}
+  @spec connect(Keyword.t()) :: {:ok, map} | {:error, Error.t()}
   def connect(opts) do
     handshake = Query.build("select 1")
     params = DBConnection.Query.encode(handshake, _params = [], _opts = [])
 
-    common_flags =
-      Keyword.drop(opts, [:timeout, :pool_index])
-      |> Enum.map(fn {k, v} -> {"--#{k}", to_string(v)} end)
+    config =
+      %{
+        timeout: opts[:timeout] || :timer.seconds(15),
+        settings: opts[:settings] || [],
+        cmd: Keyword.fetch!(opts, :cmd)
+      }
 
-    case handle_execute(handshake, params, _opts = [], common_flags) do
-      {:ok, handshake, responses, ^common_flags} ->
+    case handle_execute(handshake, params, _opts = [], config) do
+      {:ok, handshake, responses, _config} ->
         case DBConnection.Query.decode(handshake, responses, _opts = []) do
           %Result{rows: [[1]]} ->
-            {:ok, common_flags}
+            {:ok, config}
 
           result ->
             {:error, Error.exception("unexpected result for '#{handshake}': " <> inspect(result))}
         end
 
-      {:error, reason, _common_flags} ->
+      {:error, reason, _config} ->
         {:error, reason}
     end
   end
@@ -76,83 +79,56 @@ defmodule Ch.Local.Connection do
   end
 
   @impl true
-  def handle_execute(query, params, _opts, common_flags) do
-    {extra_flags, body} = params
-    flags = common_flags ++ extra_flags
+  def handle_execute(query, body, opts, config) do
+    %{cmd: cmd, settings: settings, timeout: timeout} = config
+    timeout = opts[:timeout] || timeout
+    extra_settings = opts[:settings] || []
 
-    case exec(flags, body) do
-      {:ok, responses} -> {:ok, query, responses, common_flags}
-      {:error, reason} -> {:error, reason, common_flags}
+    default_format =
+      if Keyword.get(opts, :types) do
+        "RowBinary"
+      else
+        "RowBinaryWithNamesAndTypes"
+      end
+
+    format = Keyword.get(extra_settings, :format) || default_format
+    settings = settings |> Keyword.merge(extra_settings) |> Keyword.put(:format, format)
+
+    case exec(cmd, settings, body, timeout) do
+      {:ok, responses} -> {:ok, query, responses, config}
+      {:error, reason} -> {:error, reason, config}
     end
   end
 
   @impl true
   def disconnect(_error, _state), do: :ok
 
-  defp clickhouse_local_cmd do
-    candidates = [
-      {"clickhouse-local", _args = []},
-      {"clickhouse", _args = ["local"]}
-    ]
+  require Logger
 
-    cmd_with_args =
-      Enum.find_value(candidates, fn {cmd, args} ->
-        if cmd = System.find_executable(cmd), do: {cmd, args}
-      end)
-
-    cmd_with_args ||
-      raise "could not find `clickhouse-local` nor `local` executables in path, " <>
-              "please guarantee that one of them is available before running Ch.Local commands"
-  end
-
-  # TODO timeout?
   @doc false
-  def exec(flags, body, receive? \\ false, timeout \\ :infinity) do
-    {cmd, args} = clickhouse_local_cmd()
-
-    port =
-      Port.open(
-        {:spawn_executable, cmd},
-        [
-          :use_stdio,
-          :exit_status,
-          :binary,
-          :hide,
-          args: args ++ Enum.flat_map(flags, fn {k, v} -> [k, v] end)
-        ]
-      )
-
-    try do
-      if is_function(body, 2) do
-        Enum.each(body, fn chunk ->
-          true = Port.command(port, chunk)
-        end)
-      else
-        true = Port.command(port, body)
+  def exec(cmd, settings, body, timeout) do
+    {cmd, args} =
+      case cmd do
+        {_cmd, _args} -> cmd
+        cmd when is_binary(cmd) -> {cmd, _no_args = []}
       end
 
-      if receive?, do: recv_exec(port, timeout, _acc = [])
-    after
-      Port.close(port)
-    end
-  end
+    flags = Enum.flat_map(settings, fn {k, v} -> ["--" <> to_string(k), to_string(v)] end)
 
-  defp recv_exec(port, timeout, acc) do
-    receive do
-      {^port, {:data, data}} ->
-        recv_exec(port, timeout, [data | acc])
+    task =
+      Task.async(fn ->
+        case Rambo.run(cmd, args ++ flags, in: body, timeout: timeout, log: &IO.inspect/1) do
+          {:ok, %Rambo{out: out, status: 0}} ->
+            {:ok, out}
 
-      {^port, {:exit_status, status}} ->
-        acc = :lists.reverse(acc)
+          {:error, %Rambo{out: out, status: status}} ->
+            {:error, Ch.Error.exception(code: status, message: out)}
 
-        case status do
-          0 -> {:ok, acc}
-          _ -> {:error, Ch.Error.exception(code: status, message: IO.iodata_to_binary(acc))}
+          {:killed, %Rambo{}} ->
+            {:error, Ch.Error.exception(message: "killed")}
         end
-    after
-      timeout ->
-        # TODO Ch.Local.Error{reason: :timeout}
-        {:error, :timeout}
-    end
+      end)
+
+    Task.await(task, timeout)
   end
 end

@@ -34,6 +34,7 @@ defmodule Ch.Local.MixProject do
   defp deps do
     [
       {:ch, "~> 0.2.0"},
+      {:rambo, "~> 0.3.4"},
       {:benchee, "~> 1.0", only: [:bench]},
       {:dialyxir, "~> 1.0", only: [:dev], runtime: false},
       {:ex_doc, ">= 0.0.0", only: :docs},

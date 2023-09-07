@@ -1,19 +1,9 @@
 defmodule Ch.LocalTest do
   use ExUnit.Case
 
-  test "wip" do
-    assert nil =
-             Ch.Local.Connection.exec(
-               [{"--query", "select 1 + 1"}],
-               [],
-               _receive? = true,
-               _timeout = :timer.seconds(1)
-             )
-  end
-
   describe "query" do
     setup do
-      {:ok, conn} = Ch.Local.start_link(path: ".")
+      {:ok, conn} = Ch.Local.start_link(settings: [path: "."])
       {:ok, conn: conn}
     end
 
@@ -31,13 +21,10 @@ defmodule Ch.LocalTest do
 
     test "create, select, insert, select", %{conn: conn} do
       Ch.Local.query!(conn, "create database if not exists example")
+      on_exit(fn -> Ch.Local.query!(conn, "drop database example") end)
 
       Ch.Local.query!(conn, """
-      create table if not exists example.demo(
-        a UInt16,
-        b String
-      ) engine MergeTree
-        order by a
+      create table if not exists example.demo(a UInt16, b String) engine MergeTree order by a
       """)
 
       assert Ch.Local.query!(conn, "select * from example.demo").rows == []
