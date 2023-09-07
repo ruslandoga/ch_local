@@ -53,12 +53,24 @@ defaults = [
 ```elixir
 {:ok, pid} = Ch.Local.start_link(settings: [path: "./demo"])
 
+# creates ./demo/data/demo dir
 Ch.Local.query!(pid, "CREATE DATABASE demo")
+# creates ./demo/data/demo/example dir
 Ch.Local.query!(pid, "CREATE TABLE demo.example(a UInt64, b String) ENGINE MergeTree ORDER BY a")
+# creates ./demo/data/demo/example/all_1_1_0 block
 Ch.Local.query!(pid, "INSERT INTO demo.example(a, b) FORMAT RowBinary", [[1, "2"], [3, "4"]], types: ["UInt64", "String"])
+# creates ./demo/data/demo/example/all_2_2_0 block
+Ch.Local.query!(pid, "INSERT INTO demo.example(b, a) FORMAT RowBinary", [["8", 7], ["6", 5]], types: [:string, :u64])
+# merges these two blocks into ./demo/data/demo/example/all_1_2_1
+# btw the naming is all_<min>_<max>_<level>
+Ch.Local.query!(pid, "OPTIMIZE TABLE demo.example")
 
-{:ok, %Ch.Result{rows: [[1, "2"], [3, "4"]]}} =
-  Ch.Local.query(pid, "select * from demo.example order by a")
+# note that OPTIMIZE TABLE is not removing stale blocks -- that's up to you
+{:ok, ["detached", "format_version.txt", "all_1_1_0", "all_1_2_1", "all_2_2_0"]} =
+  File.ls("./demo/data/demo/example")
+
+{:ok, %Ch.Result{rows: [[1, "2"], [3, "4"], [5, "6"], [7, "8"]]}} =
+  Ch.Local.query(pid, "SELECT * FROM demo.example ORDER BY a")
 ```
 
 Please see [Ch](https://github.com/plausible/ch) for more usage details.
