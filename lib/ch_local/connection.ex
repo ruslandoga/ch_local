@@ -2,8 +2,6 @@ defmodule Ch.Local.Connection do
   @moduledoc false
 
   use DBConnection
-  require Logger
-
   alias Ch.Local.Query
   alias Ch.{Error, Result}
 
@@ -102,8 +100,6 @@ defmodule Ch.Local.Connection do
 
   @impl true
   def disconnect(_error, _state), do: :ok
-
-  require Logger
 
   @doc false
   def exec(cmd, settings, body, timeout) do
