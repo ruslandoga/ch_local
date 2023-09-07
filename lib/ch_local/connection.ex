@@ -117,7 +117,8 @@ defmodule Ch.Local.Connection do
 
     task =
       Task.async(fn ->
-        case Rambo.run(cmd, args ++ flags, in: body, timeout: timeout, log: &IO.inspect/1) do
+        # case Rambo.run(cmd, args ++ flags, in: body, timeout: timeout, log: &IO.inspect/1) do
+        case Rambo.run(cmd, args ++ flags, in: body, timeout: timeout) do
           {:ok, %Rambo{out: out, status: 0}} ->
             {:ok, out}
 
