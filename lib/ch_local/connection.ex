@@ -102,7 +102,7 @@ defmodule Ch.Local.Connection do
   def disconnect(_error, _state), do: :ok
 
   @doc false
-  def exec(cmd, settings, body, timeout) do
+  def exec(cmd, settings, body, _timeout) do
     {cmd, args} =
       case cmd do
         {_cmd, _args} -> cmd
@@ -111,21 +111,15 @@ defmodule Ch.Local.Connection do
 
     flags = Enum.flat_map(settings, fn {k, v} -> ["--" <> to_string(k), to_string(v)] end)
 
-    task =
-      Task.async(fn ->
-        # case Rambo.run(cmd, args ++ flags, in: body, timeout: timeout, log: &IO.inspect/1) do
-        case Rambo.run(cmd, args ++ flags, in: body, timeout: timeout) do
-          {:ok, %Rambo{out: out, status: 0}} ->
-            {:ok, out}
+    case Rambo.run(cmd, args ++ flags, in: body, log: false) do
+      {:ok, %Rambo{out: out}} ->
+        {:ok, out}
 
-          {:error, %Rambo{out: out, status: status}} ->
-            {:error, Ch.Error.exception(code: status, message: out)}
+      {:error, %Rambo{status: code, err: message}} ->
+        {:error, Ch.Error.exception(code: code, message: message)}
 
-          {:killed, %Rambo{}} ->
-            {:error, Ch.Error.exception(message: "killed")}
-        end
-      end)
-
-    Task.await(task, timeout)
+      {:error, message} when is_binary(message) ->
+        {:error, RuntimeError.exception(message: message)}
+    end
   end
 end
