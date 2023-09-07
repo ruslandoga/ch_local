@@ -27,3 +27,4 @@ ch_local-*.tar
 
 # ClickHouse stuff
 /.ch/
+/demo/
