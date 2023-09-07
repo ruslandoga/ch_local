@@ -1,9 +1,9 @@
 defmodule Ch.LocalTest do
   use ExUnit.Case
 
-  describe "query" do
+  describe "stateless query" do
     setup do
-      {:ok, conn} = Ch.Local.start_link(settings: [path: "."])
+      {:ok, conn} = Ch.Local.start_link()
       {:ok, conn: conn}
     end
 
@@ -17,6 +17,13 @@ defmodule Ch.LocalTest do
 
     test "select with named params", %{conn: conn} do
       assert Ch.Local.query!(conn, "select 1 + {a:Int16}", %{"a" => 1}).rows == [[2]]
+    end
+  end
+
+  describe "stateful query" do
+    setup do
+      {:ok, conn} = Ch.Local.start_link(settings: [path: "./.ch"])
+      {:ok, conn: conn}
     end
 
     test "create, select, insert, select", %{conn: conn} do

@@ -26,9 +26,4 @@ ch_local-*.tar
 /tmp/
 
 # ClickHouse stuff
-/data/
-/metadata/
-/metadata_dropped/
-/store/
-/tmp/
-/user_defined/
+/.ch/
